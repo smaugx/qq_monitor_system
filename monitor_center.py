@@ -24,9 +24,10 @@ QqNameId  = 'qqnameid'
 MyidName  = {
     0:'Myself',
     100:'史矛革',
-    101:'好友xxx',
+    #101:'好友xxx',
     200:'兄弟两',
-    201:'群xxx',
+    #201:'群xxx',
+    211:'DNS监控报警',
     }
 
 
