@@ -5,14 +5,20 @@ import requests
 from flask import Flask ,request, url_for, render_template
 import json
 import urlparse
-import urllib2
+import urllib
+import redis
+import pdb
 
-app = Flask(__name__)
+qqapp = Flask(__name__)
 
-openqq_url = 'http://127.0.0.1:5000/'
+#cache statictis result db
+spool = redis.ConnectionPool(host='127.0.0.1', port=6380)
+r = redis.StrictRedis(connection_pool = spool)
 
-#mojo-webqq 登录后各个好友、群、讨论组 name 与 id 的对应关系
-NameId     = {}
+openqq_url = 'http://127.0.0.1:5598/'
+
+#mojo-webqq 登录后各个好友、群、讨论组 name 与 id 的对应关系,可能经常会变,故用redis 不通，过期时间 5 分钟
+QqNameId  = 'qqnameid'
 
 #自定义的 myid 与 name 的对应关系，用来区别给什么对象上传后发送报警信息;规定三位数 id，好友以 1 开头,群以 2开头,讨论组以 3 开头
 MyidName  = {
@@ -22,6 +28,7 @@ MyidName  = {
     200:'兄弟两',
     201:'群xxx',
     }
+
 
 #获取用户数据
 def get_user_info():
@@ -87,35 +94,38 @@ def get_discuss_info():
 
 #获取 qq 好友、群、讨论组列表中每一个的 name 与 id 对应关系，因为mojo-webqq 每次扫描登录会导致 id 变化，故获取 name 与 id 的映射关系
 def get_name_id_map(myself = {},friendlist = [],grouplist = [],discusslist = []):
-  global NameId
+  NameId = {}
   
   if myself:
     _id   = myself.get('id')
     NameId['Myself'] = _id
 
-  for f in xrange(len(QqFriend)):
-    friend = QqFriend[f]
+  for f in xrange(len(friendlist)):
+    friend = friendlist[f]
     if not friend:
       continue
+    #_name = friend.get('name').encode('utf-8')
     _name = friend.get('name')
     _id   = friend.get('id')
     NameId[_name] = _id
 
-  for g in xrange(len(QqGroup)):
-    group = QqGroup[g]
+  for g in xrange(len(grouplist)):
+    group = grouplist[g]
     if not group:
       continue
-    _name = group.get('name')
+    _name = group.get('name').encode('utf-8')
     _id   = group.get('id')
     NameId[_name] = _id
 
-  for d in xrange(len(QqDiscuss)):
-    discuss = QqDiscuss[d]
+  for d in xrange(len(discusslist)):
+    discuss = discusslist[d]
     if not discuss:
       continue
-    _name = discuss.get('name')
+    _name = discuss.get('name').encode('utf-8')
     _id   = discuss.get('id')
     NameId[_name] = _id
+
+  return NameId
     
 
 #可能需要定时执行该函数，以保证获取最新最准确的 name 与 id 的映射关系
@@ -124,7 +134,13 @@ def qq_init():
   friendlist = get_friend_info()
   grouplist = get_group_basic_info()
   discusslist = get_discuss_info()
-  get_name_id_map(myself,friendlist,grouplist,discusslist)
+
+  #mojo-webqq 登录后各个好友、群、讨论组 name 与 id 的对应关系,可能经常会变
+  NameId = get_name_id_map(myself,friendlist,grouplist,discusslist)
+
+  r.hset(QqNameId,'value',json.dumps(NameId))
+  r.expire(QqNameId, 300)  #过期时间 5m
+
 
 def urlencode(s):
   return urllib2.quote(s)
@@ -134,7 +150,16 @@ def urldecode(s):
   return urllib2.unquote(s)
 
 #发送好友消息
-def send_qq_message(upid = -1,content = ''):
+def send_qq_message(upid = -1,content = '',r = None):
+  global MyidName,QqNameId
+
+  NameId = r.hget(QqNameId,'value')
+  if not NameId: #可能过期了，需要重新获取
+    qq_init()
+
+  NameId = json.loads(r.hget(QqNameId,'value'))
+  NameId = {unicode(k).encode('utf-8') : v for k,v in NameId.iteritems()}
+
   name = MyidName.get(upid)
   _id = NameId.get(name)
   response = {'info':'','status':'error'}
@@ -155,8 +180,9 @@ def send_qq_message(upid = -1,content = ''):
 
 
   _headers = {'Connection':'close','Content-Type':'application/x-www-form-urlencoded'}
-  _params = {'id':_id,'content':content}
-  _data = urlencode(_params)
+  _params = {'id':_id,'content':content.encode('utf-8')}
+  #_data = urlencode(_params)
+  _data = urllib.urlencode(_params)
 
   try:
     s = requests.session()
@@ -182,8 +208,8 @@ def send_qq_message(upid = -1,content = ''):
 
 
 #接收报警消息，并发送到指定对象
-@app.route('/qqapi/upwarning/', methods=['POST'])
-@app.route('/qqapi/upwarning', methods=['POST'])
+@qqapp.route('/qqapi/upwarning/', methods=['POST'])
+@qqapp.route('/qqapi/upwarning', methods=['POST'])
 def ReceiveAlarmMsg():
   alarm_msg = {}
   response = {'status':'error','info':''}
@@ -199,7 +225,7 @@ def ReceiveAlarmMsg():
   content = alarm_msg.get('content')
 
   #报警信息发送到指定对象
-  response = send_qq_message(upid,content)
+  response = send_qq_message(upid,content,r)
   return json.dumps(response) 
 
 
@@ -251,8 +277,8 @@ def SmartTuling(info = ''):
 
 
 #mojo-webqq 会对于指定事件进行上报,该接口做一些处理
-@app.route('/qqapi/anypost/', methods=['POST'])
-@app.route('/qqapi/anypost', methods=['POST'])
+@qqapp.route('/qqapi/anypost/', methods=['POST'])
+@qqapp.route('/qqapi/anypost', methods=['POST'])
 def QqAnyPost():
   qqpost = {}
   if not request.is_json:
@@ -261,7 +287,7 @@ def QqAnyPost():
     qqpost = request.get_json()
   post_type = qqpost.get('post_type')
 
-  response = {
+  result = {
     "reply":"",    #要回复消息，必须包含reply的属性
     #"shutup": 1,        #可选，是否对消息发送者禁言
     #"shutup_time": 60,  #可选，禁言时长，默认60s
@@ -270,12 +296,17 @@ def QqAnyPost():
     msg_type = qqpost.get('type')
     content = qqpost.get('content')
     if msg_type == 'friend_message':
-      response['reply'] = SmartTuling(content)  #接收到好友消息，调用图灵接口智能回复
-      return json.dumps(response)
+      result['reply'] = SmartTuling(content)  #接收到好友消息，调用图灵接口智能回复
+      response = qqapp.response_class(
+        response=json.dumps(result),
+        status=200,
+        mimetype='application/json'
+      )
+      return response
     elif msg_type == 'group_message':
-      None
+      print 'recv group_message: %s' % content
     elif msg_type == 'discuss_message':
-      None
+      print 'recv discuss_message: %s' % content
 
   elif post_type == 'send_message':
     content = qqpost.get('content')
@@ -289,11 +320,14 @@ def QqAnyPost():
       print 'mojo-webqq stop'
 
   else:
-    None
+    print 'error post_type'
 
   return ''
 
 
 
+
 if __name__ == "__main__":
-  app.run(port = 5599)
+  qq_init()
+  #qqapp.run(port = 5599)
+  qqapp.run()
