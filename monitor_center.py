@@ -292,3 +292,8 @@ def QqAnyPost():
     None
 
   return ''
+
+
+
+if __name__ == "__main__":
+  app.run(port = 5599)
