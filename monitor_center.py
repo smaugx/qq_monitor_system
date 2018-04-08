@@ -2,11 +2,12 @@
 #-*- coding:utf-8 -*-
 
 import requests
-from flask import Flask ,request, url_for, render_template
+from flask import Flask ,request, url_for, render_template,jsonify
 import json
 import urlparse
 import urllib
 import redis
+import time
 import pdb
 
 qqapp = Flask(__name__)
@@ -18,9 +19,10 @@ r = redis.StrictRedis(connection_pool = spool)
 openqq_url = 'http://127.0.0.1:5598/'
 
 #mojo-webqq 登录后各个好友、群、讨论组 name 与 id 的对应关系,可能经常会变,故用redis 不通，过期时间 5 分钟
-QqNameId  = 'qqnameid'
+redis_qq_inside_nameid  = 'qq:inside-nameid'
 
-#自定义的 myid 与 name 的对应关系，用来区别给什么对象上传后发送报警信息;规定三位数 id，好友以 1 开头,群以 2开头,讨论组以 3 开头
+#自定义的 myid 与 name 的对应关系，用来区别给什么对象上传后发送报警信息;规定三位数 id，好友以 1 开头,群以 2开头,讨论组以 3 开头;update: 作为元数据，插入到 redis，每次从 redis 拿数据，这样添加分组后就不用重启该脚本了
+'''
 MyidName  = {
     0:'Myself',
     100:'史矛革',
@@ -29,6 +31,8 @@ MyidName  = {
     #201:'群xxx',
     211:'DNS监控报警',
     }
+'''
+redis_qq_user_idname = "qq:user-defined-idname"
 
 
 #获取用户数据
@@ -105,8 +109,7 @@ def get_name_id_map(myself = {},friendlist = [],grouplist = [],discusslist = [])
     friend = friendlist[f]
     if not friend:
       continue
-    #_name = friend.get('name').encode('utf-8')
-    _name = friend.get('name')
+    _name = friend.get('name').encode('utf-8')
     _id   = friend.get('id')
     NameId[_name] = _id
 
@@ -139,8 +142,12 @@ def qq_init():
   #mojo-webqq 登录后各个好友、群、讨论组 name 与 id 的对应关系,可能经常会变
   NameId = get_name_id_map(myself,friendlist,grouplist,discusslist)
 
-  r.hset(QqNameId,'value',json.dumps(NameId))
-  r.expire(QqNameId, 300)  #过期时间 5m
+  r.hset(redis_qq_inside_nameid,'value',json.dumps(NameId))
+  r.expire(redis_qq_inside_nameid, 300)  #过期时间 5m
+
+  #r.hset(redis_qq_inside_nameid,'value',json.dumps({}))
+  return
+
 
 
 def urlencode(s):
@@ -152,18 +159,28 @@ def urldecode(s):
 
 #发送好友消息
 def send_qq_message(upid = -1,content = '',r = None):
-  global MyidName,QqNameId
+  global redis_qq_inside_nameid ,redis_qq_user_idname 
 
-  NameId = r.hget(QqNameId,'value')
+  NameId = r.hget(redis_qq_inside_nameid,'value')
   if not NameId: #可能过期了，需要重新获取
     qq_init()
 
-  NameId = json.loads(r.hget(QqNameId,'value'))
-  NameId = {unicode(k).encode('utf-8') : v for k,v in NameId.iteritems()}
+  NameId = json.loads(r.hget(redis_qq_inside_nameid,'value'))
+  #NameId = {unicode(k).encode('utf-8') : v for k,v in NameId.iteritems()}
+  NameId = {k : v for k,v in NameId.iteritems()}
+
+  #每次从 redis 拿数据
+  MyidName = r.hgetall(redis_qq_user_idname)
+  if not MyidName:  #可能不存在该 key 或者该 key 设置有误
+    MyidName = {}
+
+  #此处编码要注意
+  MyidName = {int(k) : v.decode('utf-8') for k,v in MyidName.iteritems()}
 
   name = MyidName.get(upid)
   _id = NameId.get(name)
   response = {'info':'','status':'error'}
+
   if not _id:  #没有在 mojo-webqq 中找到好友
     response['info'] = "check your upid,please make sure it's right"
     return response 
@@ -227,7 +244,10 @@ def ReceiveAlarmMsg():
 
   #报警信息发送到指定对象
   response = send_qq_message(upid,content,r)
-  return json.dumps(response) 
+  response = json.dumps(response)
+  date = time.strftime('%m-%d %H:%M:%S',time.localtime(time.time()))
+  print '%s upwarning status: %s' % (date,response)
+  return response
 
 
 #使用图灵接口智能聊天,图灵接口说明： https://www.kancloud.cn/turing/web_api/522992
@@ -298,12 +318,15 @@ def QqAnyPost():
     content = qqpost.get('content')
     if msg_type == 'friend_message':
       result['reply'] = SmartTuling(content)  #接收到好友消息，调用图灵接口智能回复
+      '''
       response = qqapp.response_class(
         response=json.dumps(result),
         status=200,
         mimetype='application/json'
       )
       return response
+      '''
+      return jsonify(result)   #jsonify不仅会将内容转换为json，而且也会修改Content-Type为application/json。
     elif msg_type == 'group_message':
       print 'recv group_message: %s' % content
     elif msg_type == 'discuss_message':
@@ -318,17 +341,17 @@ def QqAnyPost():
     if event == 'login':
       print 'mojo-webqq login'
     elif event == 'stop':
-      print 'mojo-webqq stop'
+      print 'mojo-webqq stop'    #可以考虑推送到手机，使用另外的方式，比如邮件、飞信等
 
   else:
     print 'error post_type'
 
-  return ''
+  return jsonify({})
 
 
 
 
 if __name__ == "__main__":
   qq_init()
-  #qqapp.run(port = 5599)
-  qqapp.run()
+  qqapp.run(port = 5599)
+  #qqapp.run()
