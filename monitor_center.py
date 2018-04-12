@@ -286,7 +286,7 @@ def SmartTuling(info = ''):
        for r in results:
          resultType = r.get('resultType')
          values = r.get('values')
-         reply = values.get(resultType) + '\n'
+         reply += values.get(resultType) + '\n'
   except requests.exceptions.RequestException as e:
     print 'get answer from tuling failed: %s' % e
     reply = '我没明白你的意思，重新换种方式跟我说吧！'
