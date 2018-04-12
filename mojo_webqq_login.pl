@@ -1,5 +1,6 @@
 #!/usr/bin/env perl
 use Mojo::Webqq;
+use Digest::MD5;
 
 #使用 mojo-webqq 作为 webqq 框架（https://github.com/sjdy521/Mojo-Webqq.git）
 # nohup perl mojo_webqq_login.pl >> ./qq.log & 2>&1
@@ -14,6 +15,9 @@ my $client = Mojo::Webqq->new(
     log_level   => "info",     #日志打印级别
     log_encoding => "utf-8",
     update_interval => 300,
+    login_type=>"login",
+    account=>'2372961723',
+    pwd=>Digest::MD5::md5_hex('www.upyun.com,'),
 );
 
 $client->load("ShowMsg");
