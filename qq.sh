@@ -11,5 +11,5 @@ fi
 
 rm -rf /tmp/mojo_webqq_*
 
-nohup /usr/local/bin/perl  /root/qq_monitor_system/mojo_webqq_login.pl >> /root/qq_monitor_system/qq.log & 2>&1
+nohup /usr/local/bin/perl  /root/qq_monitor_system/mojo_webqq_login.pl  & 2>&1
 echo "start qq"

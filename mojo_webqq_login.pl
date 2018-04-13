@@ -13,6 +13,7 @@ $post_api = 'http://127.0.0.1:5599/qqapi/anypost/';  #接收到的消息上报�
 my $client = Mojo::Webqq->new(
     http_debug  =>  0,         #是否打印详细的debug信息
     log_level   => "info",     #日志打印级别
+    log_path    => "/root/qq_monitor_system/qq.log",
     log_encoding => "utf-8",
     update_interval => 300,
     login_type=>"login",
