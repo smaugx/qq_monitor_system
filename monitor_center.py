@@ -207,7 +207,8 @@ def send_qq_message(upid = -1,content = '',r = None):
     s.keep_alive = False
     a = requests.adapters.HTTPAdapter(max_retries= 2)
     s.mount(openqq_url,a)
-    r = s.post(_url,verify = False,headers = _headers,timeout = 10, data =_data)
+    #超时时间设置为 15 s，足够长了，保证消息即使在 webqq 重启的过程中也能发送成功（这里可能需要考虑使用缓存队列等 TODO）
+    r = s.post(_url,verify = False,headers = _headers,timeout = 15, data =_data)
     #r = requests.post(_url,data =_params)
     if r.status_code == 200:
       #{"status":"发送成功","id":23910327,"code":0} #code为 0 表示发送成功
